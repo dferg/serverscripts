@@ -1,0 +1,71 @@
+#!/usr/bin/perl
+
+use strict;
+use warnings;
+
+use Data::Dumper;
+use JSON::Tiny qw(decode_json);
+
+my $cmd = "lsblk -o PATH,MAJ:MIN,RM,SIZE,MOUNTPOINT,MODEL,SERIAL,TRAN -e 230 -d";
+
+
+my (@lines, @temps);
+my $header = 1;
+my $maxlen = 0;
+
+open FIN, "$cmd|" or die "can't execute: $cmd";
+while(<FIN>) {
+    chomp;
+    push(@lines, $_);
+
+    if ($header) {
+        $header = 0;
+        push(@temps, "TEMP");
+    } else {
+        $maxlen = length($_) if (length($_) > $maxlen);
+        if ( /^(\S+)/ ) {
+            push(@temps, &get_temp($1));
+        } else {
+            print "ERROR: parsing problem with lsblk\n";
+            print "  cmd = $cmd\n";
+            print "  lines =\n";
+            foreach(@lines) {
+                print "'$_'\n";
+            }
+            exit 1;
+        }
+    }
+}
+close FIN;
+
+for(my $i = 0; $i <= $#lines; $i++) {
+    printf "%-${maxlen}s $temps[$i]\n", $lines[$i];
+}
+
+sub get_temp {
+    my($dev) = @_;
+    my $temp = "";
+
+    my $cmd = "smartctl --json -A $dev";
+    open FIN2, "$cmd|" or die "Can't execute $cmd\n";
+    my $json = "";
+    while(<FIN2>) {
+        chomp;
+        $json .= $_;
+    }
+    close FIN2;
+
+    my $data = decode_json($json);
+    #print Dumper($data);
+    if (exists $data->{temperature}) {
+        #print Dumper($data->{temperature});
+        if (exists $data->{temperature}->{current}) {
+            #print Dumper($data->{temperature}->{current});
+            $temp = $data->{temperature}->{current};
+        }
+    }
+
+    return $temp;
+}
+
+#smartctl -a /dev/sdb | grep Temperature | awk '{print $10}'
