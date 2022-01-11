@@ -1,45 +1,89 @@
 #!/usr/bin/perl
 
+# Be smart
 use strict;
 use warnings;
 
+# Libraries
 use Data::Dumper;
 use JSON::Tiny qw(decode_json);
 
-my $cmd = "lsblk -o PATH,MAJ:MIN,RM,SIZE,MOUNTPOINT,MODEL,SERIAL,TRAN -e 230 -d";
+# Options
+my $opt_part = 0;
 
-
+# Data gathered
 my (@lines, @temps);
-my $header = 1;
 my $maxlen = 0;
 
-open FIN, "$cmd|" or die "can't execute: $cmd";
-while(<FIN>) {
-    chomp;
-    push(@lines, $_);
+# Main
+parse_cmdline();
+gather_data();
+print_report();
+exit 0;
 
-    if ($header) {
-        $header = 0;
-        push(@temps, "TEMP");
-    } else {
-        $maxlen = length($_) if (length($_) > $maxlen);
-        if ( /^(\S+)/ ) {
-            push(@temps, &get_temp($1));
+sub parse_cmdline {
+    for(my $i = 0; $i <= $#ARGV; $i++) {
+        $_ = $ARGV[0];
+        if ( /^--part$/ or /^-p$/ ) {
+            $opt_part = 1;
+        } elsif ( /^--help$/ or /^-h$/ ) {
+            print_usage();
         } else {
-            print "ERROR: parsing problem with lsblk\n";
-            print "  cmd = $cmd\n";
-            print "  lines =\n";
-            foreach(@lines) {
-                print "'$_'\n";
-            }
+            print "ERROR: unknown option: $_\n";
             exit 1;
         }
     }
 }
-close FIN;
 
-for(my $i = 0; $i <= $#lines; $i++) {
-    printf "%-${maxlen}s $temps[$i]\n", $lines[$i];
+sub print_usage {
+    print <<EOF
+usage: $0 [OPTIONS]
+
+Options:
+  -h [--help]                 - print this usage message
+  -p [--part]                 - show partitions
+EOF
+    ;
+    exit 1;
+}
+
+sub gather_data {
+    my $header = 1;
+
+    my $cmd = "lsblk -o PATH,MAJ:MIN,RM,SIZE,MOUNTPOINT,MODEL,SERIAL,TRAN -e 230";
+    if (not $opt_part) {
+        $cmd .= " -d";
+    }
+    open FIN, "$cmd|" or die "can't execute: $cmd";
+    while(<FIN>) {
+        chomp;
+        push(@lines, $_);
+
+        if ($header) {
+            $header = 0;
+            push(@temps, "TEMP");
+        } else {
+            $maxlen = length($_) if (length($_) > $maxlen);
+            if ( /^(\S+)/ ) {
+                push(@temps, &get_temp($1));
+            } else {
+                print "ERROR: parsing problem with lsblk\n";
+                print "  cmd = $cmd\n";
+                print "  lines =\n";
+                foreach(@lines) {
+                    print "'$_'\n";
+                }
+                exit 1;
+            }
+        }
+    }
+    close FIN;
+}
+
+sub print_report {
+    for(my $i = 0; $i <= $#lines; $i++) {
+        printf "%-${maxlen}s $temps[$i]\n", $lines[$i];
+    }
 }
 
 sub get_temp {
@@ -67,5 +111,3 @@ sub get_temp {
 
     return $temp;
 }
-
-#smartctl -a /dev/sdb | grep Temperature | awk '{print $10}'
