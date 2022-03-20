@@ -1,0 +1,126 @@
+#!/usr/bin/perl
+
+use Data::Dumper;
+use warnings;
+use strict;
+
+my $conf_path_vm = "/etc/pve/qemu-server";
+my $conf_path_ct = "/etc/pve/lxc";
+my @recs;
+my $purpose = "PURPOSE";
+my $include_purpose = 0;
+
+my $cmd = "zfs list @ARGV";
+open FIN, "$cmd|" or die "Can't run $cmd";
+my $insert_idx = undef;
+my $header_idx = 0;
+while(<FIN>) {
+    my $rec = {};
+    $rec->{LINE} = $_;
+
+    if (not defined $insert_idx) {
+        # Looking for the header
+        if ( /^NAME\s+USED\s+AVAIL\s+REFER\s+MOUNTPOINT$/ ) {
+            $insert_idx = index $_, "MOUNTPOINT";
+        } else {
+            $header_idx++;
+        }
+    } else {
+        # In the body
+        if ( /^([^\s\/]+)\/data\/([^\s\/]+)/ ) {
+            $rec->{NAME} = $&;
+            $rec->{POOL} = $1;
+            $rec->{DISK} = $2;
+
+            if ( $rec->{DISK} =~ /^vm-(\d+)-/ ) {
+                $rec->{TYPE} = "vm";
+                $rec->{ID}   = $1;
+            } elsif ( $rec->{DISK} =~ /^subvol-(\d+)-/ ) {
+                $rec->{TYPE} = "ct";
+                $rec->{ID}   = $1;
+            } else {
+                $rec->{TYPE} = "??";
+            }
+        }
+    }
+    push(@recs, $rec);
+}
+close FIN;
+
+if ( not defined $insert_idx or $insert_idx eq -1 ) {
+    print "ERROR: Could not find the header of 'zfs list' output\n";
+    exit 1;
+}
+
+my $max_width = length($purpose);
+for my $rec (@recs) {
+    my $width = &get_purpose($rec);
+    if ( $width > $max_width ) {
+        $max_width = $width;
+    }
+}
+
+for(my $i = 0; $i <= $#recs; $i++) {
+    my $rec = $recs[$i];
+    if ($include_purpose) {
+        my $str;
+        if ( $i eq $header_idx ) {
+            $str = $purpose;
+        } else {
+            $str = $rec->{PURPOSE};
+        }
+        &print_with_insertion($rec->{LINE}, $insert_idx, $str, $max_width);
+    } else {
+        print $rec->{LINE};
+    }
+}
+
+sub print_with_insertion {
+    my($line, $insert_idx, $str, $pad_to_len) = @_;
+    $str .= " " x ($pad_to_len - length($str) + 2);
+    $line = substr($line, 0, $insert_idx) . $str . substr($line, $insert_idx);
+    print $line;
+}
+
+sub get_purpose {
+    my($rec) = @_;
+
+    if (not exists $rec->{TYPE}) {
+        $rec->{PURPOSE} = "";
+        return 0;
+    }
+
+    my $search_term;
+    if ($rec->{TYPE} eq "vm") {
+        $rec->{CONF} = "$conf_path_vm/$rec->{ID}.conf";
+        $search_term = "name:";
+    } else {
+        $rec->{CONF} = "$conf_path_ct/$rec->{ID}.conf";
+        $search_term = "hostname:";
+    }
+
+    if ( ! -f $rec->{CONF} ) {
+        print "WARNING: Could not find $rec->{CONF}\n";
+    } else {
+        # Get the machine's name from the .conf file
+        open FIN, $rec->{CONF} or die "Cannot open $rec->{CONF} for reading!";
+        while(<FIN>) {
+            last if ( /^\s*\[/ ); # do not process snapshots
+            if ( /^\s*$search_term\s*(.*)/ ) {
+                $rec->{VM_NAME} = $1;
+                $rec->{VM_NAME} =~ s/\s+$//;
+            }
+        }
+        close FIN;
+    }
+    
+    # Form the purpose
+    $include_purpose = 1;
+    $rec->{PURPOSE} = $rec->{TYPE};
+    if (exists $rec->{VM_NAME}) {
+        $rec->{PURPOSE} .= ":$rec->{VM_NAME}";
+    }
+
+    return length($rec->{PURPOSE});
+}
+

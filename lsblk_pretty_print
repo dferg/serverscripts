@@ -10,24 +10,30 @@ use JSON::Tiny qw(decode_json);
 
 # Options
 my $opt_part = 0;
+my $opt_map  = undef;
 
 # Data gathered
 my (@lines, @temps);
 my $maxlen = 0;
+our @serial_to_physical;
 
 # Main
 parse_cmdline();
 gather_data();
+read_map() if ($opt_map);
 print_report();
+print_map() if ($opt_map);
 exit 0;
 
 sub parse_cmdline {
     for(my $i = 0; $i <= $#ARGV; $i++) {
-        $_ = $ARGV[0];
+        $_ = $ARGV[$i];
         if ( /^--part$/ or /^-p$/ ) {
             $opt_part = 1;
         } elsif ( /^--help$/ or /^-h$/ ) {
             print_usage();
+        } elsif ( /^--map$/ or /^-m$/ ) {
+            $opt_map = $ARGV[++$i];
         } else {
             print "ERROR: unknown option: $_\n";
             exit 1;
@@ -42,9 +48,30 @@ usage: $0 [OPTIONS]
 Options:
   -h [--help]                 - print this usage message
   -p [--part]                 - show partitions
+  -m [--map] <serial_map>     - print data in a grid
 EOF
     ;
     exit 1;
+}
+
+sub read_map {
+    require $opt_map;
+}
+
+sub print_map {
+    my($rows) = scalar(@serial_to_physical);
+    my($cols) = scalar(@{ $serial_to_physical[0] });
+    
+    my $col_w = 20;
+    print "=" x ($cols * $col_w) . "\n";
+
+    for(my $row = 0; $row <= $#serial_to_physical; $row++) {
+        my @row = @{ $serial_to_physical[$row] };
+        for(my $col = 0; $col <= $#row; $col++) {
+            print "row = $row, $col=$col: $row[$col]\n";
+        }
+    }
+    print "=" x ($cols * $col_w) . "\n";
 }
 
 sub gather_data {
